@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,36 @@ type Client struct {
     room *Room
 
     send chan *Message
+
+    username string
+}
+
+func handleNewClient(c net.Conn) {
+	fmt.Fprintf(os.Stderr, "LOG [%s] Received connection: %s\n", time.Now().Format(time.TimeOnly), c.RemoteAddr().String())
+    newClient := &Client{conn: c, room: globalRoom, send: make(chan *Message)}
+    newClient.register()
+    go newClient.Read()
+    go newClient.Write()
+}
+
+func (client *Client) announce(content []byte) {
+    if username, found := strings.CutPrefix(string(content), "#announce "); found != false {
+        client.username = string(username)
+    } else {
+        // add generated name to client
+    }
+}
+
+func create(content []byte) {
+    // if roomName, found := strings.CutPrefix(content, "#create "); found != false {
+    //     // TODO: create room
+    // } 
+}
+
+func join(content []byte) {
+    // if roomName, found := strings.CutPrefix(content, "#join "); found != false {
+    //     // TODO: add user to room
+    // }
 }
 
 // Read reads data from Client connection to the room
@@ -41,9 +72,16 @@ func (client *Client) Read() {
             break;
         }
         fmt.Fprintf(os.Stdout, "[%s]: %s\n", client.conn.RemoteAddr().String(), content)
-        content = bytes.TrimSpace(bytes.Replace(content, []byte{'\n'}, []byte{' '}, -1)) 
-        content = append(content, '\n')
-        client.room.broadcast <- &Message{client, content}
+        // Primitive dispatch before migration to ws
+        if (strings.HasPrefix("#announce")) {
+
+        } else if (strings.HasPrefix("#create")) {
+
+        } else if (strings.HasPrefix("#join")) {
+
+        } else {
+            client.broadcast(content)
+        }
     }
 }
 
@@ -79,11 +117,7 @@ func (c *Client) unregister() {
     c.room.unregister <- c
 }
 
-func handleNewClient(c net.Conn) {
-	fmt.Fprintf(os.Stderr, "LOG [%s] Received connection: %s\n", time.Now().Format(time.TimeOnly), c.RemoteAddr().String())
-    newClient := &Client{conn: c, room: globalRoom, send: make(chan *Message)}
-    newClient.register()
-    go newClient.Read()
-    go newClient.Write()
+func (c *Client) broadcast(content []byte) {
+    c.room.broadcast <- &Message{c, content}
 }
 
