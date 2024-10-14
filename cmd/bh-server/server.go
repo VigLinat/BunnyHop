@@ -19,7 +19,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-    go globalRoom.run()
+    globalRoom := AddRoom("global")
+    go globalRoom.Run()
     fmt.Fprintf(os.Stderr, "LOG [%s] Start listening on %s\n", currentTimeStr(), hostAddr)
 	for {
 		conn, err := listener.Accept()

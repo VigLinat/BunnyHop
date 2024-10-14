@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -23,43 +22,81 @@ type Client struct {
     send chan *Message
 
     username string
+
+    join chan string
+
+    create chan string
+
+    announce chan string
+}
+
+func NewClient(c net.Conn) *Client {
+    return &Client {
+        conn: c,
+        room: nil,
+        send: make(chan *Message),
+        username: "anon", // todo: generate Id
+        join: make(chan string),
+        create: make(chan string),
+        announce: make(chan string),
+    }
+}
+
+func (c *Client) register() {
+    c.room.register <- c
+}
+
+func (c *Client) unregister() {
+    if (c.room != nil) {
+        c.room.unregister <- c
+    }
+}
+
+func (c *Client) broadcast(content []byte) {
+    if (c.room != nil) {
+        c.room.broadcast <- &Message{c, content}
+    }
+}
+
+func (c *Client) switchRoom(newRoom *Room) {
+    c.unregister()
+    c.room = newRoom
+    c.register()
 }
 
 func handleNewClient(c net.Conn) {
-	fmt.Fprintf(os.Stderr, "LOG [%s] Received connection: %s\n", time.Now().Format(time.TimeOnly), c.RemoteAddr().String())
-    newClient := &Client{conn: c, room: globalRoom, send: make(chan *Message)}
-    newClient.register()
+    fmt.Fprintf(os.Stderr, "LOG [%s] Received connection: %s\n", time.Now().Format(time.TimeOnly), c.RemoteAddr().String())
+    newClient := NewClient(c)
+    go newClient.handleRequest()
     go newClient.Read()
     go newClient.Write()
 }
 
-func (client *Client) announce(content []byte) {
-    if username, found := strings.CutPrefix(string(content), "#announce "); found != false {
-        client.username = string(username)
-    } else {
-        // add generated name to client
+func (c *Client) handleRequest() {
+    for {
+        select {
+        case username := <- c.announce:
+            c.username = username
+        case roomName := <- c.create:
+            newRoom := AddRoom(roomName)
+            newRoom.Run()
+            c.switchRoom(newRoom)
+        case roomName := <- c.join:
+            if room, found := GetRoom(roomName); found {
+                c.switchRoom(room)
+            }
+        }
     }
 }
 
-func create(content []byte) {
-    // if roomName, found := strings.CutPrefix(content, "#create "); found != false {
-    //     // TODO: create room
-    // } 
-}
-
-func join(content []byte) {
-    // if roomName, found := strings.CutPrefix(content, "#join "); found != false {
-    //     // TODO: add user to room
-    // }
-}
-
 // Read reads data from Client connection to the room
-func (client *Client) Read() {
+func  (client *Client) Read() {
     var reader *bufio.Reader = bufio.NewReader(client.conn)
     defer func() {
         client.conn.Close()
         client.unregister()
     }()
+
     for {
         content, err := reader.ReadBytes('\n')
         if err != nil {
@@ -72,13 +109,19 @@ func (client *Client) Read() {
             break;
         }
         fmt.Fprintf(os.Stdout, "[%s]: %s\n", client.conn.RemoteAddr().String(), content)
-        // Primitive dispatch before migration to ws
-        if (strings.HasPrefix("#announce")) {
 
-        } else if (strings.HasPrefix("#create")) {
-
-        } else if (strings.HasPrefix("#join")) {
-
+        // Primitive request dispatch before migration to ws
+        // convert only the minimum requirement number of bytes to string
+        contentLen := len(content)
+        if (contentLen > len("#announce ") && string(content[0:len("#announce ")]) == "#announce ") {
+            userName, _ := strings.CutSuffix(string(content[len("#announce "):]), "\n")
+            client.announce <- userName
+        } else if (contentLen > len("#create ") && string(content[0:len("#create ")]) == "#create ") {
+            roomName, _ := strings.CutSuffix(string(content[len("#create "):]), "\n") 
+            client.create <- roomName
+        } else if (contentLen > len("#join ") && string(content[0:len("#join ")]) == "#join ") {
+            roomName, _ := strings.CutSuffix(string(content[len("#join "):]), "\n") 
+            client.join <- roomName
         } else {
             client.broadcast(content)
         }
@@ -107,17 +150,5 @@ func (client *Client) Write() {
             }
         }
     }
-}
-
-func (c *Client) register() {
-    c.room.register <- c
-}
-
-func (c *Client) unregister() {
-    c.room.unregister <- c
-}
-
-func (c *Client) broadcast(content []byte) {
-    c.room.broadcast <- &Message{c, content}
 }
 
