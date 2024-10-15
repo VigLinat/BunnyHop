@@ -4,33 +4,27 @@ import (
     "flag"
     "fmt"
     "log"
-    "net"
     "os"
     "time"
+    "net/http"
 )
 
-var port = flag.String("p","50160", "http server port")
-var addr = flag.String("a", "localhost", "http server ip address")
+var (
+    port = flag.String("p","50160", "http server port")
+    addr = flag.String("a", "localhost", "http server ip address")
+)
+
 
 func main() {
 	flag.Parse()
     hostAddr := fmt.Sprintf("%s:%s", *addr, *port)
-	listener, err := net.Listen("tcp4", hostAddr)
-	if err != nil {
-		log.Fatal(err)
-	}
+    // TODO: delete global room
     globalRoom := AddRoom("global")
     go globalRoom.Run()
     fmt.Fprintf(os.Stderr, "LOG [%s] Start listening on %s\n", currentTimeStr(), hostAddr)
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Print(err)
-			continue
-		}
-        // This is called Inversion of control ?
-        handleNewClient(conn)
-	}
+
+    http.HandleFunc("/", handleNewClient)
+    log.Fatal(http.ListenAndServe(hostAddr, nil))
 }
 
 func currentTimeStr() string {
