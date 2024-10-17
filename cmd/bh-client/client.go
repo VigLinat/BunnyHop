@@ -2,57 +2,60 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"log"
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"time"
 
+	"github.com/VigLinat/BunnyHop/internal"
 	ws "github.com/gorilla/websocket"
 )
 
 var (
     addr = flag.String("a", "localhost", "Address of server to connect to")
     port = flag.String("p", "50160", "Port of server to connect to")
+    messages = make(chan internal.BHMessage)
+    remote string
+    commandRegex = regexp.MustCompile(`^#(\w+) (\w+)`)
 )
 
 func main() {
     flag.Parse()
-
-    messages := make(chan string)
+	remote := fmt.Sprintf("%s:%s", *addr, *port)
 
     interrupt := make(chan os.Signal, 1)
     signal.Notify(interrupt, os.Interrupt)
 
-	remote := fmt.Sprintf("%s:%s", *addr, *port)
+    // TODO: make an appropriate endpoint, not '/'
     u := url.URL{Scheme: "ws", Host: remote, Path: "/"}
-	fmt.Fprintf(os.Stderr, "LOG [%s] Connecting to remote: %s\n", currentTimeStr(), u.String())
+    internal.MyLog("Connecting to remote: %s", u.String())
 
     conn, _, err := ws.DefaultDialer.Dial(u.String(), nil)
     if err != nil {
-        log.Fatalf("LOG [%s] Dial error: %s\n", currentTimeStr(), err)
+        internal.MyLog("Dial error: %s", err)
+        os.Exit(1)
     }
 	defer func() {
-        fmt.Fprintf(os.Stderr, "LOG [%s] Closing connection %s\n", currentTimeStr(), remote)
+        internal.MyLog("Closing connection %s", remote)
 		conn.Close()
 	}()
 
     done := make(chan struct{})
 
     // Listen
-	// go mustCopy(os.Stdout, conn)
     go func() {
         defer close(done)
         for {
             _, message, err := conn.ReadMessage()
             if err != nil {
-                log.Printf("LOG [%s] Read error: %s\n", currentTimeStr(), err)
+                internal.MyLog("Read error: %s", err)
                 return
             }
-            log.Println(message)
+            fmt.Println(message)
         }
     }()
 
@@ -63,20 +66,23 @@ func main() {
                 case <- done:
                     return
                 case message := <- messages:
-                    err := conn.WriteMessage(ws.TextMessage, []byte(message))
+                    data, err := json.Marshal(message)
                     if err != nil {
-                        log.Printf("LOG [%s] Write error: %s\n", currentTimeStr(), err)
+                        internal.MyLog("Marshal error: %s", data)
+                    }
+                    if err = conn.WriteMessage(ws.TextMessage, data); err != nil {
+                        internal.MyLog("Write error: %s", err)
                         return 
                     }
                 case <- interrupt:
-                    log.Println("interrupt")
+                    internal.MyLog("SIGINT")
 
                     // Gracefull shutdown
                     // Close the connection by sending a close message
                     // Then wait (with t/out) for the server to close the connection
                     err := conn.WriteMessage(ws.CloseMessage, ws.FormatCloseMessage(ws.CloseNormalClosure, ""))
                     if err != nil {
-                        log.Printf("LOG [%s] WriteClose error: %s\n", currentTimeStr(), err)
+                        internal.MyLog("WriteClose error: %s", err)
                         return
                     }
                     select {
@@ -89,19 +95,31 @@ func main() {
     }()
 
     // Write
-	// mustCopy(conn, os.Stdin)
     input := bufio.NewScanner(os.Stdin)
     for input.Scan() {
-        messages <- input.Text()
+        processUserInput(input.Bytes())
     }
+
 }
 
-func mustCopy(dst io.Writer, src io.Reader) {
-	if _, err := io.Copy(dst, src); err != nil {
-		log.Fatal(err)
-	}
+func processUserInput(message []byte) {
+    bhMessage := internal.BHMessage{}
+    if cmd, arg, found := checkIfCommand(message); found {
+        bhMessage.MsgType = cmd
+        bhMessage.MsgBody = arg
+    } else {
+        bhMessage.MsgBody = message
+        bhMessage.MsgType = "text"
+    }
+    messages <- bhMessage
 }
 
-func currentTimeStr() string {
-    return time.Now().Format(time.TimeOnly)
+func checkIfCommand(input []byte) (cmd string, arg []byte, found bool) {
+    match := commandRegex.FindSubmatch(input)
+    if match == nil || len(match) != 2 {
+        return
+    }
+    cmd, arg, found = string(match[0]), match[1], true
+    return
 }
+

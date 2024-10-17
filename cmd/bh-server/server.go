@@ -24,6 +24,7 @@ func main() {
     fmt.Fprintf(os.Stderr, "LOG [%s] Start listening on %s\n", currentTimeStr(), hostAddr)
 
     http.HandleFunc("/", handleNewClient)
+
     log.Fatal(http.ListenAndServe(hostAddr, nil))
 }
 

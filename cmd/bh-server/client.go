@@ -1,14 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"time"
-    "strings"
 
+	"github.com/VigLinat/BunnyHop/internal"
 	ws "github.com/gorilla/websocket"
 )
 
@@ -80,26 +81,34 @@ func handleNewClient(w http.ResponseWriter, r *http.Request) {
         log.Println(err)
         return
     }
-	fmt.Fprintf(os.Stderr, "LOG [%s] Received connection: %s\n", time.Now().Format(time.TimeOnly), conn.RemoteAddr().String())
+    internal.MyLog("Received connection: %s", conn.RemoteAddr().String())
 	newClient := NewClient(conn)
-	go newClient.handleRequest()
 	go newClient.Read()
 	go newClient.Write()
 }
 
-func (c *Client) handleRequest() {
-	for {
-		select {
-		case roomName := <-c.create:
-			newRoom := AddRoom(roomName)
-			newRoom.Run()
-			c.switchRoom(newRoom)
-		case roomName := <-c.join:
-			if room, found := GetRoom(roomName); found {
-				c.switchRoom(room)
-			}
-		}
-	}
+func (client *Client) handleMessage(message []byte) {
+    data := &internal.BHMessage{}
+    if err := json.Unmarshal(message, data); err != nil {
+        internal.MyLog("Unmarshal error: %s", err)
+    }
+    body := string(data.MsgBody) // NOTE: temp!
+    switch data.MsgType {
+    // TODO: get rid of join and create channels
+    case "text":
+        client.broadcast(data.MsgBody)
+    case "join":
+        roomName := string(body)
+        if room, found := GetRoom(roomName); found {
+            client.switchRoom(room)
+        }
+    case "create":
+        roomName := string(body)
+        newRoom := AddRoom(roomName)
+        newRoom.Run()
+        client.switchRoom(newRoom)
+    }
+
 }
 
 // Read reads data from Client connection to the room
@@ -125,17 +134,7 @@ func (client *Client) Read() {
         }
 
 		fmt.Fprintf(os.Stdout, "[%s]: %s\n", client.conn.RemoteAddr().String(), message)
-
-        messageLen := len(message)
-        if (messageLen > len("#create ") && string(message[0:len("#create ")]) == "#create ") {
-            roomName, _ := strings.CutSuffix(string(message[len("#create "):]), "\n") 
-            client.create <- roomName
-        } else if (messageLen > len("#join ") && string(message[0:len("#join ")]) == "#join ") {
-            roomName, _ := strings.CutSuffix(string(message[len("#join "):]), "\n") 
-            client.join <- roomName
-        } else {
-            client.broadcast(message)
-        }
+        client.handleMessage(message)
     }
 }
 
