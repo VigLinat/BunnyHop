@@ -4,13 +4,9 @@ var allRooms map[string]*Room = make(map[string]*Room)
 
 type Room struct {
     name string
-
     clients map[*Client]struct{}
-
     broadcast chan Message
-
     register chan *Client
-
     unregister chan *Client
 }
 

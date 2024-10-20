@@ -118,7 +118,7 @@ func (client *Client) handleMessage(message []byte) {
         roomName := string(data.MsgBody)
         if _, found := GetRoom(roomName); !found {
             newRoom := AddRoom(roomName)
-            newRoom.Run()
+            go newRoom.Run()
             client.switchRoom(newRoom)
         }
     }
