@@ -16,7 +16,7 @@ var (
 
 
 func main() {
-	flag.Parse()
+    flag.Parse()
     hostAddr := fmt.Sprintf("%s:%s", *addr, *port)
     // TODO: delete global room
     globalRoom := AddRoom("global")
