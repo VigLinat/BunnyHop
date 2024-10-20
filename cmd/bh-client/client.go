@@ -1,18 +1,18 @@
 package main
 
 import (
-    "bufio"
-    "encoding/json"
-    "flag"
-    "fmt"
-    "net/url"
-    "os"
-    "os/signal"
-    "regexp"
-    "time"
+	"bufio"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"net/url"
+	"os"
+	"os/signal"
+	"regexp"
+	"time"
 
-    "github.com/VigLinat/BunnyHop/internal"
-    ws "github.com/gorilla/websocket"
+	"github.com/VigLinat/BunnyHop/internal"
+	ws "github.com/gorilla/websocket"
 )
 
 var (
@@ -22,11 +22,16 @@ var (
     commandRegex = regexp.MustCompile(`^#(\w+) (\w+)`)
 )
 
+var (
+    interrupt = make(chan os.Signal, 1) // close connection with Ctrl-C
+    done = make(chan struct{}) // remote closed the connection
+    closing = make(chan struct{}) // close connection when EOF encountered
+)
+
 func main() {
     flag.Parse()
     remote := fmt.Sprintf("%s:%s", *addr, *port)
 
-    interrupt := make(chan os.Signal, 1)
     signal.Notify(interrupt, os.Interrupt)
 
     // TODO: make an appropriate endpoint, not '/'
@@ -43,62 +48,74 @@ func main() {
         conn.Close()
     }()
 
-    done := make(chan struct{})
-
     // Listen
     go func() {
-        defer close(done)
         for {
             _, message, err := conn.ReadMessage()
             if err != nil {
                 internal.MyLog("Read error: %s", err)
+                done <- struct{}{}
                 return
             }
             fmt.Println(string(message)) // NOTE: temp!
         }
     }()
 
-    // Handle WS protocol
+    // Write
     go func() {
+        input := bufio.NewScanner(os.Stdin)
         for {
-            select {
-            case <-done:
-                return
-            case message := <-messages:
-                data, err := json.Marshal(message)
+            ok := input.Scan()
+            if !ok {
+                err := input.Err()
+                // err == nil if input.Scan() encountered io.EOF
                 if err != nil {
-                    internal.MyLog("Marshal error: %s", data)
+                    internal.MyLog("Input error: %s", err) 
                 }
-                if err = conn.WriteMessage(ws.TextMessage, data); err != nil {
-                    internal.MyLog("Write error: %s", err)
-                    return
-                }
-            case <-interrupt:
-                internal.MyLog("SIGINT")
-
-                // Gracefull shutdown
-                // Close the connection by sending a close message
-                // Then wait (with t/out) for the server to close the connection
-                err := conn.WriteMessage(ws.CloseMessage, ws.FormatCloseMessage(ws.CloseNormalClosure, ""))
-                if err != nil {
-                    internal.MyLog("WriteClose error: %s", err)
-                    return
-                }
-                select {
-                case <-done:
-                case <-time.After(time.Second):
-                }
-                return
+                closing <- struct{}{}
             }
+            processUserInput(input.Bytes())
         }
     }()
 
-    // Write
-    input := bufio.NewScanner(os.Stdin)
-    for input.Scan() {
-        processUserInput(input.Bytes())
+    // Handle WS protocol
+    for {
+        select {
+        case <-done:
+            return
+        case <- closing:
+            internal.MyLog("Closing connection to [%s]", conn.RemoteAddr())
+            closeConn(conn)
+            return
+        case <-interrupt:
+            internal.MyLog("SIGINT: Closing connection to [%s]", conn.RemoteAddr())
+            closeConn(conn)
+            return
+        case message := <-messages:
+            data, err := json.Marshal(message)
+            if err != nil {
+                internal.MyLog("Marshal error: %s", data)
+            }
+            if err = conn.WriteMessage(ws.TextMessage, data); err != nil {
+                internal.MyLog("Write error: %s", err)
+                return
+            }
+        }
     }
+}
 
+// closeConn performs gracefull shutdown
+// Close the connection by sending a close message
+// Then wait with timeout for the server to close the connection
+func closeConn(conn *ws.Conn) {
+    err := conn.WriteMessage(ws.CloseMessage, ws.FormatCloseMessage(ws.CloseNormalClosure, ""))
+    if err != nil {
+        internal.MyLog("WriteClose error: %s", err)
+        return
+    }
+    select {
+    case <-time.After(time.Second):
+    }
 }
 
 func processUserInput(message []byte) {

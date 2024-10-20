@@ -3,7 +3,6 @@ package main
 import (
     "encoding/json"
     "fmt"
-    "io"
     "log"
     "net/http"
     "os"
@@ -92,12 +91,7 @@ func (client *Client) Read() {
     for {
         _, message, err := client.conn.ReadMessage()
         if err != nil {
-            switch err {
-            case io.EOF:
-                fmt.Fprintf(os.Stdout, "Client [%s] disconnected\n", client.conn.LocalAddr().String())
-            default:
-                fmt.Fprintf(os.Stdout, "Client [%s] Read error: %s\n", client.conn.LocalAddr().String(), err.Error())
-            }
+            fmt.Fprintf(os.Stdout, "Client [%s] Read error: %s\n", client.conn.LocalAddr().String(), err.Error())
             break
         }
 
