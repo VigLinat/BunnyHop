@@ -15,11 +15,8 @@ import (
 
 const (
 	writeWait = 10 * time.Second
-
     pongWait = 60 * time.Second
-
     pingPeriod = (pongWait * 9) / 10
-
     maxMessageSize = 512
 )
 
@@ -30,15 +27,10 @@ var upgrader = ws.Upgrader {
 
 type Client struct {
 	conn *ws.Conn
-
 	room *Room
-
 	send chan Message
-
 	username string
-
 	join chan string
-
 	create chan string
 }
 
@@ -87,30 +79,6 @@ func handleNewClient(w http.ResponseWriter, r *http.Request) {
 	go newClient.Write()
 }
 
-func (client *Client) handleMessage(message []byte) {
-    data := &internal.BHMessage{}
-    if err := json.Unmarshal(message, data); err != nil {
-        internal.MyLog("Unmarshal error: %s", err)
-    }
-    body := string(data.MsgBody) // NOTE: temp!
-    switch data.MsgType {
-    // TODO: get rid of join and create channels
-    case "text":
-        client.broadcast(data.MsgBody)
-    case "join":
-        roomName := string(body)
-        if room, found := GetRoom(roomName); found {
-            client.switchRoom(room)
-        }
-    case "create":
-        roomName := string(body)
-        newRoom := AddRoom(roomName)
-        newRoom.Run()
-        client.switchRoom(newRoom)
-    }
-
-}
-
 // Read reads data from Client connection to the room
 func (client *Client) Read() {
 	defer func() {
@@ -138,6 +106,31 @@ func (client *Client) Read() {
     }
 }
 
+func (client *Client) handleMessage(message []byte) {
+    data := &internal.BHMessage{}
+    if err := json.Unmarshal(message, data); err != nil {
+        internal.MyLog("Unmarshal error: %s", err)
+    }
+    switch data.MsgType {
+    // TODO: get rid of join and create channels
+    case "text":
+        client.broadcast(data.MsgBody)
+    case "join":
+        roomName := string(data.MsgBody)
+        if room, found := GetRoom(roomName); found {
+            client.switchRoom(room)
+        }
+    case "create":
+        roomName := string(data.MsgBody)
+        if _, found := GetRoom(roomName); !found {
+            newRoom := AddRoom(roomName)
+            newRoom.Run()
+            client.switchRoom(newRoom)
+        }
+    }
+
+}
+
 // Write writes data from room to Client connection
 func (client *Client) Write() {
     ticker := time.NewTicker(pingPeriod)
@@ -158,7 +151,6 @@ func (client *Client) Write() {
             if err != nil {
                 return
             }
-            // fmt.Printf("Client [%s] writing: %s\n", client.conn.LocalAddr(), message.content)
             w.Write(message.content)
 
             // Add queued chat messages to the current ws message

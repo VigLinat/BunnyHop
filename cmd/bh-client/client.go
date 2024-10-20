@@ -54,7 +54,7 @@ func main() {
 				internal.MyLog("Read error: %s", err)
 				return
 			}
-			fmt.Println(message)
+            fmt.Println(string(message)) // NOTE: temp!
 		}
 	}()
 
@@ -102,22 +102,19 @@ func main() {
 }
 
 func processUserInput(message []byte) {
-	bhMessage := internal.BHMessage{}
-	if cmd, arg, found := checkIfCommand(message); found {
-		bhMessage.MsgType = cmd
-		bhMessage.MsgBody = arg
-	} else {
-		bhMessage.MsgBody = message
-		bhMessage.MsgType = "text"
-	}
-	messages <- bhMessage
+	msgType, msgBody := parseInput(message)
+	messages <- internal.BHMessage{MsgType: msgType, MsgBody: msgBody}
 }
 
-func checkIfCommand(input []byte) (cmd string, arg []byte, found bool) {
+func parseInput(input []byte) (msgType string, msgBody []byte) {
 	match := commandRegex.FindSubmatch(input)
-	if match == nil || len(match) != 2 {
-		return
+	if match == nil {
+		msgType = "text"
+		msgBody = input
+	} else if len(match) == 3 {
+		msgType = string(match[1])
+		msgBody = match[2]
 	}
-	cmd, arg, found = string(match[0]), match[1], true
 	return
 }
+
